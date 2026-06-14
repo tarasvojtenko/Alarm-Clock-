@@ -1,0 +1,153 @@
+// alarm.rs - Будильник на Rust с chrono и звуком
+// Добавьте в Cargo.toml:
+// [dependencies]
+// chrono = "0.4"
+// rodio = "0.17"
+// serde = { version = "1.0", features = ["derive"] }
+// serde_json = "1.0"
+
+use chrono::{Local, Timelike, Duration};
+use std::fs;
+use std::io::{self, Write};
+use std::thread;
+use std::time;
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Alarm {
+    hour: u32,
+    minute: u32,
+    second: u32,
+    repeat: String, // "once", "daily", "weekdays"
+    active: bool,
+}
+
+const CONFIG_FILE: &str = "alarm_config.json";
+
+fn main() {
+    let mut alarm = load_alarm();
+    println!("⏰ Rust Будильник");
+    println!("Команды: set, stop, snooze, status, exit");
+    let _ = io::stdout().flush();
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let r = running.clone();
+    // Поток проверки
+    let handle = thread::spawn(move || {
+        while r.load(std::sync::atomic::Ordering::Relaxed) {
+            if alarm.active {
+                let now = Local::now();
+                let should_ring = match alarm.repeat.as_str() {
+                    "once" => {
+                        now.hour() == alarm.hour && now.minute() == alarm.minute && now.second() == alarm.second
+                    },
+                    "daily" => {
+                        now.hour() == alarm.hour && now.minute() == alarm.minute && now.second() == alarm.second
+                    },
+                    "weekdays" => {
+                        let wd = now.weekday().num_days_from_monday();
+                        wd < 5 && now.hour() == alarm.hour && now.minute() == alarm.minute && now.second() == alarm.second
+                    },
+                    _ => false,
+                };
+                if should_ring {
+                    ring();
+                    if alarm.repeat == "once" {
+                        alarm.active = false;
+                        save_alarm(&alarm);
+                    }
+                }
+            }
+            thread::sleep(time::Duration::from_millis(500));
+        }
+    });
+
+    let stdin = io::stdin();
+    let mut input = String::new();
+    loop {
+        input.clear();
+        stdin.read_line(&mut input).unwrap();
+        let cmd = input.trim();
+        match cmd {
+            "set" => {
+                alarm = set_alarm_interactive();
+                save_alarm(&alarm);
+            },
+            "stop" => {
+                alarm.active = false;
+                save_alarm(&alarm);
+                println!("Будильник выключен");
+            },
+            "snooze" => {
+                if alarm.active {
+                    let now = Local::now();
+                    let new_time = now + Duration::minutes(5);
+                    alarm.hour = new_time.hour();
+                    alarm.minute = new_time.minute();
+                    alarm.second = new_time.second();
+                    alarm.repeat = "once".to_string();
+                    println!("Отложено до {:02}:{:02}:{:02}", alarm.hour, alarm.minute, alarm.second);
+                    save_alarm(&alarm);
+                } else {
+                    println!("Будильник не активен");
+                }
+            },
+            "status" => {
+                if alarm.active {
+                    println!("Активен: {:02}:{:02}:{:02} ({})", alarm.hour, alarm.minute, alarm.second, alarm.repeat);
+                } else {
+                    println!("Не активен");
+                }
+            },
+            "exit" => {
+                running.store(false, std::sync::atomic::Ordering::Relaxed);
+                handle.join().unwrap();
+                break;
+            },
+            _ => println!("Неизвестно"),
+        }
+    }
+}
+
+fn set_alarm_interactive() -> Alarm {
+    println!("Установка будильника:");
+    print!("Час (0-23): ");
+    io::stdout().flush().unwrap();
+    let mut h = String::new(); io::stdin().read_line(&mut h).unwrap();
+    let hour: u32 = h.trim().parse().unwrap_or(0);
+    print!("Минута (0-59): ");
+    io::stdout().flush().unwrap();
+    let mut m = String::new(); io::stdin().read_line(&mut m).unwrap();
+    let minute: u32 = m.trim().parse().unwrap_or(0);
+    print!("Секунда (0-59): ");
+    io::stdout().flush().unwrap();
+    let mut s = String::new(); io::stdin().read_line(&mut s).unwrap();
+    let second: u32 = s.trim().parse().unwrap_or(0);
+    print!("Повтор (once/daily/weekdays): ");
+    io::stdout().flush().unwrap();
+    let mut r = String::new(); io::stdin().read_line(&mut r).unwrap();
+    let repeat = r.trim().to_string();
+    Alarm { hour, minute, second, repeat, active: true }
+}
+
+fn ring() {
+    println!("\n🔔🔔🔔 БУДИЛЬНИК! 🔔🔔🔔");
+    for _ in 0..5 {
+        print!("\x07");
+        io::stdout().flush().unwrap();
+        thread::sleep(time::Duration::from_millis(500));
+    }
+    println!("\nВведите 'stop' для выключения, 'snooze' для откладывания");
+}
+
+fn load_alarm() -> Alarm {
+    if let Ok(data) = fs::read_to_string(CONFIG_FILE) {
+        serde_json::from_str(&data).unwrap_or(Alarm { hour:0, minute:0, second:0, repeat:"once".into(), active:false })
+    } else {
+        Alarm { hour:0, minute:0, second:0, repeat:"once".into(), active:false }
+    }
+}
+
+fn save_alarm(alarm: &Alarm) {
+    let data = serde_json::to_string_pretty(alarm).unwrap();
+    fs::write(CONFIG_FILE, data).unwrap();
+}

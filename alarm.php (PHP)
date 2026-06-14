@@ -1,0 +1,189 @@
+<?php
+// alarm.php - Будильник на PHP с сессией и JS-интерфейсом
+session_start();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['action'])) {
+        if ($_POST['action'] === 'set') {
+            $_SESSION['alarm'] = [
+                'hour' => (int)$_POST['hour'],
+                'minute' => (int)$_POST['minute'],
+                'second' => (int)$_POST['second'],
+                'repeat' => $_POST['repeat'],
+                'active' => true
+            ];
+        } elseif ($_POST['action'] === 'stop') {
+            unset($_SESSION['alarm']);
+        } elseif ($_POST['action'] === 'snooze') {
+            if (isset($_SESSION['alarm'])) {
+                $snoozeTime = time() + 5*60;
+                $_SESSION['alarm']['hour'] = date('H', $snoozeTime);
+                $_SESSION['alarm']['minute'] = date('i', $snoozeTime);
+                $_SESSION['alarm']['second'] = date('s', $snoozeTime);
+                $_SESSION['alarm']['repeat'] = 'once';
+            }
+        }
+        exit;
+    }
+}
+$alarm = isset($_SESSION['alarm']) ? $_SESSION['alarm'] : null;
+?>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>PHP Будильник</title>
+    <style>
+        body { font-family: 'Segoe UI', system-ui; background: #2c3e50; display: flex; justify-content: center; align-items: center; height: 100vh; margin:0; }
+        .card { background: white; border-radius: 40px; padding: 30px; width: 450px; text-align: center; box-shadow: 0 15px 30px rgba(0,0,0,0.3); }
+        .clock { font-size: 56px; font-family: monospace; background: #2c3e50; color: #f1c40f; padding: 15px; border-radius: 50px; margin: 20px 0; }
+        select, input, button { padding: 8px 12px; margin: 5px; border-radius: 30px; border: 1px solid #ccc; }
+        button { background: #3498db; color: white; border: none; cursor: pointer; }
+        .presets button { background: #2ecc71; width: 70px; }
+        .status { background: #ecf0f1; padding: 8px; border-radius: 20px; margin-top: 15px; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h2>⏰ Будильник PHP</h2>
+    <div class="clock" id="currentTime">--:--:--</div>
+    <div>
+        <input type="number" id="hour" min="0" max="23" value="07" style="width:60px"> :
+        <input type="number" id="minute" min="0" max="59" value="00" style="width:60px"> :
+        <input type="number" id="second" min="0" max="59" value="00" style="width:60px">
+    </div>
+    <div>
+        <select id="repeat">
+            <option value="once">Один раз</option>
+            <option value="daily">Ежедневно</option>
+            <option value="weekdays">По будням</option>
+        </select>
+    </div>
+    <div class="presets">
+        <button data-h="7" data-m="0">07:00</button>
+        <button data-h="8" data-m="30">08:30</button>
+        <button data-h="21" data-m="0">21:00</button>
+    </div>
+    <div>
+        <button id="setBtn">🔔 Установить</button>
+        <button id="stopBtn">🔕 Выключить</button>
+        <button id="snoozeBtn">😴 Отложить</button>
+    </div>
+    <div class="status" id="statusMsg">
+        <?php echo $alarm ? "Будильник установлен на {$alarm['hour']}:{$alarm['minute']}:{$alarm['second']} ({$alarm['repeat']})" : "Будильник не активен"; ?>
+    </div>
+</div>
+<script>
+    const curTimeSpan = document.getElementById('currentTime');
+    const hourInp = document.getElementById('hour');
+    const minuteInp = document.getElementById('minute');
+    const secondInp = document.getElementById('second');
+    const repeatSel = document.getElementById('repeat');
+    const statusDiv = document.getElementById('statusMsg');
+
+    function updateClock() {
+        const now = new Date();
+        curTimeSpan.innerText = now.toLocaleTimeString('ru-RU');
+        requestAnimationFrame(updateClock);
+        // Проверка срабатывания (на клиенте)
+        const stored = localStorage.getItem('alarm_local');
+        if (stored) {
+            const alarm = JSON.parse(stored);
+            if (alarm.active) {
+                const nowDate = new Date();
+                let ring = false;
+                if (alarm.repeat === 'once') {
+                    if (nowDate.getHours() === alarm.hour && nowDate.getMinutes() === alarm.minute && nowDate.getSeconds() === alarm.second)
+                        ring = true;
+                } else if (alarm.repeat === 'daily') {
+                    if (nowDate.getHours() === alarm.hour && nowDate.getMinutes() === alarm.minute && nowDate.getSeconds() === alarm.second)
+                        ring = true;
+                } else if (alarm.repeat === 'weekdays') {
+                    const dow = nowDate.getDay();
+                    if (dow >= 1 && dow <= 5 && nowDate.getHours() === alarm.hour && nowDate.getMinutes() === alarm.minute && nowDate.getSeconds() === alarm.second)
+                        ring = true;
+                }
+                if (ring) {
+                    ringAlarm(alarm);
+                }
+            }
+        }
+    }
+
+    function ringAlarm(alarm) {
+        // Звук через Web Audio
+        try {
+            let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.frequency.value = 880;
+            gain.gain.value = 0.3;
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 2);
+            osc.stop(audioCtx.currentTime + 2);
+        } catch(e) {}
+        alert("⏰ Будильник!");
+        if (alarm.repeat === 'once') {
+            fetch(window.location.href, { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body: 'action=stop' });
+            localStorage.removeItem('alarm_local');
+            statusDiv.innerText = "Будильник выключен";
+        } else {
+            // обновляем статус
+            statusDiv.innerText = `Будильник сработал. Следующий: ${alarm.hour}:${alarm.minute}:${alarm.second}`;
+        }
+    }
+
+    document.getElementById('setBtn').onclick = () => {
+        const hour = parseInt(hourInp.value);
+        const minute = parseInt(minuteInp.value);
+        const second = parseInt(secondInp.value);
+        const repeat = repeatSel.value;
+        fetch(window.location.href, {
+            method: 'POST',
+            headers: {'Content-Type':'application/x-www-form-urlencoded'},
+            body: `action=set&hour=${hour}&minute=${minute}&second=${second}&repeat=${repeat}`
+        }).then(() => {
+            const alarm = { hour, minute, second, repeat, active: true };
+            localStorage.setItem('alarm_local', JSON.stringify(alarm));
+            statusDiv.innerText = `Будильник установлен на ${hour}:${minute}:${second} (${repeat})`;
+        });
+    };
+    document.getElementById('stopBtn').onclick = () => {
+        fetch(window.location.href, { method: 'POST', body: 'action=stop' });
+        localStorage.removeItem('alarm_local');
+        statusDiv.innerText = "Будильник выключен";
+    };
+    document.getElementById('snoozeBtn').onclick = () => {
+        fetch(window.location.href, { method: 'POST', body: 'action=snooze' }).then(() => {
+            const alarm = JSON.parse(localStorage.getItem('alarm_local'));
+            if (alarm) {
+                const newDate = new Date();
+                newDate.setMinutes(newDate.getMinutes() + 5);
+                alarm.hour = newDate.getHours();
+                alarm.minute = newDate.getMinutes();
+                alarm.second = newDate.getSeconds();
+                alarm.repeat = 'once';
+                localStorage.setItem('alarm_local', JSON.stringify(alarm));
+                statusDiv.innerText = `Отложено до ${alarm.hour}:${alarm.minute}:${alarm.second}`;
+            }
+        });
+    };
+    document.querySelectorAll('.presets button').forEach(btn => {
+        btn.onclick = () => {
+            hourInp.value = btn.dataset.h;
+            minuteInp.value = btn.dataset.m;
+            secondInp.value = "00";
+            document.getElementById('setBtn').click();
+        };
+    });
+    updateClock();
+    // Восстановление из localStorage при загрузке
+    const storedAlarm = localStorage.getItem('alarm_local');
+    if (storedAlarm) {
+        const alm = JSON.parse(storedAlarm);
+        if (alm.active) statusDiv.innerText = `Будильник активен: ${alm.hour}:${alm.minute}:${alm.second} (${alm.repeat})`;
+    }
+</script>
+</body>
+</html>

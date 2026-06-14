@@ -1,0 +1,260 @@
+<!-- alarm.html - Будильник на JavaScript с веб-интерфейсом -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Веб-будильник</title>
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body {
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', system-ui;
+            margin: 0;
+            padding: 20px;
+        }
+        .card {
+            background: rgba(255,255,255,0.9);
+            border-radius: 40px;
+            padding: 30px;
+            width: 480px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+            text-align: center;
+            backdrop-filter: blur(4px);
+        }
+        .clock {
+            font-size: 68px;
+            font-family: 'Courier New', monospace;
+            background: #2c3e50;
+            color: #f1c40f;
+            padding: 15px;
+            border-radius: 60px;
+            margin: 20px 0;
+            letter-spacing: 4px;
+        }
+        .alarm-set {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        input, select, button {
+            padding: 10px 14px;
+            font-size: 18px;
+            border-radius: 40px;
+            border: none;
+            background: #ecf0f1;
+            text-align: center;
+        }
+        button {
+            background: #3498db;
+            color: white;
+            cursor: pointer;
+            transition: 0.1s;
+        }
+        button:hover { filter: brightness(1.05); transform: scale(0.97); }
+        .repeat-group {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin: 15px 0;
+        }
+        .repeat-group label { display: flex; align-items: center; gap: 5px; }
+        .status {
+            margin: 15px 0;
+            font-weight: bold;
+            background: #2c3e50;
+            color: white;
+            padding: 8px;
+            border-radius: 30px;
+        }
+        .presets button {
+            background: #2ecc71;
+            margin: 5px;
+            width: 70px;
+        }
+        footer { margin-top: 20px; font-size: 12px; color: #7f8c8d; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h2>⏰ Будильник · JS</h2>
+    <div class="clock" id="currentTime">--:--:--</div>
+    <div class="alarm-set">
+        <input type="number" id="hour" min="0" max="23" value="07" step="1" style="width:70px"> :
+        <input type="number" id="min" min="0" max="59" value="00" step="1" style="width:70px"> :
+        <input type="number" id="sec" min="0" max="59" value="00" step="1" style="width:70px">
+    </div>
+    <div class="repeat-group">
+        <label><input type="radio" name="repeat" value="once" checked> Один раз</label>
+        <label><input type="radio" name="repeat" value="daily"> Ежедневно</label>
+        <label><input type="radio" name="repeat" value="weekdays"> По будням</label>
+    </div>
+    <div class="presets">
+        <button data-h="7" data-m="0">07:00</button>
+        <button data-h="8" data-m="30">08:30</button>
+        <button data-h="21" data-m="0">21:00</button>
+        <button data-h="23" data-m="59">23:59</button>
+    </div>
+    <div>
+        <button id="setAlarmBtn">🔔 Установить</button>
+        <button id="stopAlarmBtn">🔕 Выключить</button>
+        <button id="snoozeBtn">😴 Отложить (5 мин)</button>
+    </div>
+    <div class="status" id="statusMsg">Будильник не установлен</div>
+    <footer>🔊 Звук + уведомления</footer>
+</div>
+<script>
+    let alarmTime = null;        // объект Date
+    let repeat = "once";
+    let active = false;
+    let timeoutId = null;
+    let audioContext = null;
+
+    // Элементы
+    const curTimeSpan = document.getElementById('currentTime');
+    const hourInput = document.getElementById('hour');
+    const minInput = document.getElementById('min');
+    const secInput = document.getElementById('sec');
+    const statusDiv = document.getElementById('statusMsg');
+
+    function updateClock() {
+        const now = new Date();
+        curTimeSpan.innerText = now.toLocaleTimeString('ru-RU');
+        // Проверка срабатывания
+        if (active && alarmTime) {
+            const nowTime = new Date();
+            let shouldRing = false;
+            if (repeat === "once") {
+                if (nowTime >= alarmTime) shouldRing = true;
+            } else if (repeat === "daily") {
+                if (nowTime.getHours() === alarmTime.getHours() &&
+                    nowTime.getMinutes() === alarmTime.getMinutes() &&
+                    nowTime.getSeconds() === alarmTime.getSeconds()) {
+                    shouldRing = true;
+                }
+            } else if (repeat === "weekdays") {
+                const dow = nowTime.getDay();
+                if (dow >= 1 && dow <= 5 &&
+                    nowTime.getHours() === alarmTime.getHours() &&
+                    nowTime.getMinutes() === alarmTime.getMinutes() &&
+                    nowTime.getSeconds() === alarmTime.getSeconds()) {
+                    shouldRing = true;
+                }
+            }
+            if (shouldRing) {
+                ringAlarm();
+            }
+        }
+        requestAnimationFrame(updateClock);
+    }
+
+    function ringAlarm() {
+        // Звук через Web Audio (короткий гудок)
+        try {
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            osc.frequency.value = 880;
+            gain.gain.value = 0.3;
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 2);
+            osc.stop(audioContext.currentTime + 2);
+        } catch(e) { console.log("звук не поддержан"); }
+        // Уведомление
+        if (Notification.permission === "granted") {
+            new Notification("Будильник!", { body: "Время просыпаться!" });
+        } else if (Notification.permission !== "denied") {
+            Notification.requestPermission();
+        }
+        alert("⏰ Звонок будильника!");
+        if (repeat === "once") {
+            deactivateAlarm();
+        } else {
+            // для повторов срабатывание произойдет на следующий день автоматически, просто убираем флаг активности звонка
+            // но оставляем активным для следующего дня
+            if (repeat === "daily") {
+                // ничего не делаем, alarmTime уже установлен
+            } else if (repeat === "weekdays") {
+                // тоже
+            }
+            statusDiv.innerText = `Будильник прозвенел. Следующий: ${alarmTime.toLocaleTimeString('ru-RU')}`;
+        }
+    }
+
+    function setAlarm() {
+        const h = parseInt(hourInput.value);
+        const m = parseInt(minInput.value);
+        const s = parseInt(secInput.value);
+        const now = new Date();
+        let alarmDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, s);
+        if (alarmDate <= now) {
+            alarmDate.setDate(alarmDate.getDate() + 1);
+        }
+        alarmTime = alarmDate;
+        repeat = document.querySelector('input[name="repeat"]:checked').value;
+        active = true;
+        statusDiv.innerText = `Будильник установлен на ${alarmTime.toLocaleTimeString('ru-RU')} (${repeat})`;
+        // Сохраняем в localStorage
+        localStorage.setItem('alarm', JSON.stringify({
+            time: alarmTime.getTime(),
+            repeat: repeat,
+            active: true
+        }));
+    }
+
+    function deactivateAlarm() {
+        active = false;
+        alarmTime = null;
+        statusDiv.innerText = "Будильник выключен";
+        localStorage.removeItem('alarm');
+    }
+
+    function snooze() {
+        if (!active) return;
+        const newTime = new Date();
+        newTime.setMinutes(newTime.getMinutes() + 5);
+        alarmTime = newTime;
+        statusDiv.innerText = `Отложено до ${alarmTime.toLocaleTimeString('ru-RU')}`;
+        localStorage.setItem('alarm', JSON.stringify({
+            time: alarmTime.getTime(),
+            repeat: repeat,
+            active: true
+        }));
+    }
+
+    document.getElementById('setAlarmBtn').onclick = setAlarm;
+    document.getElementById('stopAlarmBtn').onclick = deactivateAlarm;
+    document.getElementById('snoozeBtn').onclick = snooze;
+    document.querySelectorAll('.presets button').forEach(btn => {
+        btn.onclick = () => {
+            hourInput.value = btn.dataset.h;
+            minInput.value = btn.dataset.m;
+            secInput.value = "00";
+            setAlarm();
+        };
+    });
+    // Восстановление из localStorage
+    const saved = localStorage.getItem('alarm');
+    if (saved) {
+        try {
+            const obj = JSON.parse(saved);
+            alarmTime = new Date(obj.time);
+            repeat = obj.repeat;
+            active = obj.active;
+            if (active && alarmTime) {
+                statusDiv.innerText = `Будильник восстановлен на ${alarmTime.toLocaleTimeString('ru-RU')} (${repeat})`;
+            } else { deactivateAlarm(); }
+        } catch(e) {}
+    }
+    updateClock();
+    if (Notification.permission === "default") Notification.requestPermission();
+</script>
+</body>
+</html>
